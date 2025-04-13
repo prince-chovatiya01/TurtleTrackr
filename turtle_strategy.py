@@ -31,19 +31,63 @@ with st.sidebar:
         investment_amount = st.number_input("Investment Amount per Trade (₹)",
                                             min_value=10000, max_value=1000000,
                                             value=100000, step=10000)
-        lookback_period = st.slider("Lookback Period (Days)", min_value=20, max_value=100, value=55)
-        profit_target = st.slider("Profit Target (Multiplier)", min_value=1.0, max_value=1.5, value=1.06, step=0.01,
-                                  format="%.2f")
-        min_buy_gap = st.slider("Minimum Buy Gap (Days)", min_value=15, max_value=60, value=30)
+        
+        # Add columns for slider and input box side by side
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            lookback_period = st.slider("Lookback Period (Days)", min_value=20, max_value=100, value=55)
+        with col2:
+            lookback_period = st.number_input("", min_value=20, max_value=100, value=lookback_period, label_visibility="collapsed")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            profit_target = st.slider("Profit Target (Multiplier)", min_value=1.0, max_value=1.5, value=1.06, step=0.01,
+                                    format="%.2f")
+        with col2:
+            profit_target = st.number_input("", min_value=1.0, max_value=1.5, value=profit_target, step=0.01, format="%.2f", label_visibility="collapsed")
+        
+        col1, col2 = st.columns([2, 1])  
+        with col1:
+            min_buy_gap = st.slider("Minimum Buy Gap (Days)", min_value=0, max_value=60, value=30)
+        with col2:
+            min_buy_gap = st.number_input("", min_value=0, max_value=60, value=min_buy_gap, step=1, label_visibility="collapsed")
+            
     else:
         st.info(
             "In Optimization Mode, only ticker and duration are required. The app will search for optimal parameter values.")
         # Set fixed investment amount (can be adjusted) for optimization.
         investment_amount = 100000
-        # Allow the user to define search ranges (can adjust these as needed)
-        lookback_range = st.slider("Lookback Period Range (Days)", 20, 100, (30, 70))
-        profit_target_range = st.slider("Profit Target Range (Multiplier)", 1.0, 1.5, (1.03, 1.10), step=0.01)
-        min_buy_gap_range = st.slider("Min Buy Gap Range (Days)", 15, 60, (20, 40))
+        
+        # Allow the user to define search ranges with both sliders and input boxes
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            lookback_range = st.slider("Lookback Period Range (Days)", 20, 100, (30, 70))
+        with col2:
+            lookback_min = st.number_input("Min", min_value=20, max_value=100, value=lookback_range[0])
+        with col3:
+            lookback_max = st.number_input("Max", min_value=20, max_value=100, value=lookback_range[1])
+        # Update slider if input boxes change
+        lookback_range = (lookback_min, lookback_max)
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            profit_target_range = st.slider("Profit Target Range (Multiplier)", 1.0, 1.5, (1.03, 1.10), step=0.01)
+        with col2:
+            profit_min = st.number_input("Min", min_value=1.0, max_value=1.5, value=profit_target_range[0], step=0.01, format="%.2f")
+        with col3:
+            profit_max = st.number_input("Max", min_value=1.0, max_value=1.5, value=profit_target_range[1], step=0.01, format="%.2f")
+        # Update slider if input boxes change
+        profit_target_range = (profit_min, profit_max)
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            min_buy_gap_range = st.slider("Min Buy Gap Range (Days)", 0, 60, (20, 40))
+        with col2:
+            gap_min = st.number_input("Min", min_value=0, max_value=60, value=min_buy_gap_range[0])
+        with col3:
+            gap_max = st.number_input("Max", min_value=0, max_value=60, value=min_buy_gap_range[1])
+        # Update slider if input boxes change
+        min_buy_gap_range = (gap_min, gap_max)
 
     run_analysis = st.button("Run Analysis", type="primary")
 
