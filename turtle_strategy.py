@@ -35,9 +35,9 @@ with st.sidebar:
         # Add columns for slider and input box side by side
         col1, col2 = st.columns([2, 1])
         with col1:
-            lookback_period = st.slider("Lookback Period (Days)", min_value=20, max_value=100, value=55)
+            lookback_period = st.slider("Lookback Period (Days)", min_value=5, max_value=100, value=55)
         with col2:
-            lookback_period = st.number_input("", min_value=20, max_value=100, value=lookback_period, label_visibility="collapsed")
+            lookback_period = st.number_input("", min_value=5, max_value=100, value=lookback_period, label_visibility="collapsed")
         
         col1, col2 = st.columns([2, 1])
         with col1:
@@ -61,11 +61,11 @@ with st.sidebar:
         # Allow the user to define search ranges with both sliders and input boxes
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
-            lookback_range = st.slider("Lookback Period Range (Days)", 20, 100, (30, 70))
+            lookback_range = st.slider("Lookback Period Range (Days)", 5, 100, (30, 70))
         with col2:
-            lookback_min = st.number_input("Min", min_value=20, max_value=100, value=lookback_range[0])
+            lookback_min = st.number_input("Min", min_value=5, max_value=100, value=lookback_range[0])
         with col3:
-            lookback_max = st.number_input("Max", min_value=20, max_value=100, value=lookback_range[1])
+            lookback_max = st.number_input("Max", min_value=5, max_value=100, value=lookback_range[1])
         # Update slider if input boxes change
         lookback_range = (lookback_min, lookback_max)
         
