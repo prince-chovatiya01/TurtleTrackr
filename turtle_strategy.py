@@ -379,6 +379,9 @@ import plotly.graph_objects as go
 import base64
 from io import BytesIO
 
+# ================================================
+# Streamlit Page Configuration & Title
+# ================================================
 st.set_page_config(layout="wide", page_title="Turtle Trading Strategy Backtester")
 st.title("Turtle Trading Strategy Backtester")
 
@@ -389,8 +392,9 @@ with st.sidebar:
     st.header("Input Parameters")
     mode = st.radio("Select Mode", ["Normal Mode", "Optimization Mode"])
 
+    # Ticker and Date Range (common to both modes)
     ticker = st.text_input("Enter Stock Ticker (e.g., RELIANCE.NS)", "RELIANCE.NS") \
-              .strip().upper()
+               .strip().upper()
 
     start_date = st.date_input(
         "Start Date",
@@ -405,8 +409,12 @@ with st.sidebar:
         max_value=datetime.now()
     )
 
+    # ────────────────────────────────────────────────────
+    # Normal Mode: User picks all parameters directly
+    # ────────────────────────────────────────────────────
     if mode == "Normal Mode":
         st.subheader("Strategy Parameters")
+
         investment_amount = st.number_input(
             "Investment Amount per Trade (₹)",
             min_value=10_000,
@@ -424,6 +432,7 @@ with st.sidebar:
                 value=55
             )
         with col2:
+            # Mirror slider value in a number_input
             lookback_period = st.number_input(
                 "",
                 min_value=5,
@@ -471,13 +480,17 @@ with st.sidebar:
                 label_visibility="collapsed"
             )
 
+    # ────────────────────────────────────────────────────
+    # Optimization Mode: App will search over ranges
+    # ────────────────────────────────────────────────────
     else:
         st.info(
             "In Optimization Mode, only ticker and duration are required. "
             "The app will search for optimal parameter values."
         )
-        investment_amount = 100_000  # fixed during optimization
+        investment_amount = 100_000  # Fixed during optimization
 
+        # Lookback‐period range
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             lookback_range = st.slider(
@@ -500,8 +513,10 @@ with st.sidebar:
                 max_value=100,
                 value=lookback_range[1]
             )
+        # Make sure slider updates if number_inputs change
         lookback_range = (lookback_min, lookback_max)
 
+        # Profit‐target range
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             profit_target_range = st.slider(
@@ -531,6 +546,7 @@ with st.sidebar:
             )
         profit_target_range = (profit_min, profit_max)
 
+        # Min‐buy‐gap range
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             min_buy_gap_range = st.slider(
@@ -559,7 +575,7 @@ with st.sidebar:
 
 
 # ================================================
-# simulate_turtle_strategy (with “5% down” rule)
+# Strategy Simulation Function (Top‐Level)
 # ================================================
 def simulate_turtle_strategy(
     df: pd.DataFrame,
@@ -569,68 +585,78 @@ def simulate_turtle_strategy(
     min_buy_gap: int
 ) -> dict:
     """
-    df: DataFrame with DateIndex and columns ['Open','High','Low','Close','Adj Close','Volume']
-    We assume df is already sorted by date ascending.
-    lookback_period: days for Donchian-type breakout
-    profit_target: e.g. 1.06 for 6% gain
-    min_buy_gap: days to wait after each buy before another buy.
+    Runs the Turtle Trading backtest on `df` (must be sorted by date ascending).
+    Includes the “5% down from average buy price” rule for scaling in.
+    Returns a dict with:
+      • buy_signals (int)
+      • sell_signals (int)
+      • total_profit (float)
+      • trades (list of dicts)
+      • investment_over_time (DataFrame indexed by date)
+      • transaction_log (DataFrame of every buy/sell)
+      • max_investment (float)
     """
 
-    open_orders = []   # list of tuples: (buy_date (Timestamp), buy_price (float))
+    open_orders = []      # Each entry: (buy_date (np.datetime64), buy_price (float))
     total_profit = 0.0
     buy_signals = 0
     sell_signals = 0
-    trade_details = []        # one entry per completed “roundtrip” (all positions sold)
-    investment_tracker = []   # daily { 'date': timestamp, 'investment': float }
-    transaction_log = []      # detailed log of each individual buy/sell
+    trade_details = []
+    investment_tracker = []
+    transaction_log = []
 
-    # Ensure df is sorted by date just in case
+    # Ensure df is sorted (just in case)
     df = df.sort_index()
-
-    # Pre‐extract high and close into NumPy arrays for scalar access
-    highs = df["High"].to_numpy()       # dtype float64
-    closes = df["Close"].to_numpy()     # dtype float64
-    dates = df.index.to_numpy()         # dtype datetime64[ns]
-
+    highs = df["High"].to_numpy()      # NumPy array of float64
+    closes = df["Close"].to_numpy()    # NumPy array of float64
+    dates = df.index.to_numpy()        # NumPy array of datetime64[ns]
     n = len(df)
+
     for i in range(lookback_period, n):
-        current_date = dates[i]
-        current_close = float(closes[i])  # cast to Python float
+        current_date = dates[i]                # np.datetime64
+        current_close = float(closes[i])       # Python float
 
-        # 1) Compute “period_high” = highest high over the previous lookback_period days
-        #    We use i-lookback_period : i (exclusive of i).
+        # ───────────────────────────────────────────────
+        # 1) Compute period_high = max “High” over [i-lookback_period : i)
+        # ───────────────────────────────────────────────
         slice_start = i - lookback_period
-        slice_end = i  # exclusive
-        # highs[slice_start : slice_end] is a NumPy array of floats
-        period_high = float(np.max(highs[slice_start:slice_end]))
+        slice_end = i
+        period_high = float(np.max(highs[slice_start:slice_end]))  # Python float
 
-        # 2) Compute current average buy price if we have open orders
+        # ───────────────────────────────────────────────
+        # 2) If we already hold positions, compute avg_buy_price
+        # ───────────────────────────────────────────────
         avg_buy_price = None
         if open_orders:
-            # open_orders is a list of (timestamp, buy_price)
             avg_buy_price = float(
                 sum([order[1] for order in open_orders]) / len(open_orders)
             )
 
-        # 3) Determine if we CAN BUY today
+        # ───────────────────────────────────────────────
+        # 3) Decide if we CAN BUY today:
+        #    • Must respect min_buy_gap days from last buy
+        #    • If holding, new buy only if current_close ≤ avg_buy_price * 0.95
+        # ───────────────────────────────────────────────
         can_buy = True
         if open_orders:
-            last_buy_date = open_orders[-1][0]
-            # a) enforce minimum days gap
+            last_buy_date = open_orders[-1][0]  # np.datetime64
+            # (a) Enforce min_buy_gap
             if current_date < (last_buy_date + np.timedelta64(min_buy_gap, "D")):
                 can_buy = False
-            # b) enforce “5% below avg buy price” rule
+            # (b) Enforce 5%‐down rule
             elif not (current_close <= avg_buy_price * 0.95):
                 can_buy = False
 
-        # 4) If breakout AND can_buy, append a new buy
-        current_high = float(highs[i])  # today's high as Python float
+        # ───────────────────────────────────────────────
+        # 4) If breakout (High ≥ period_high) AND can_buy, place a BUY
+        # ───────────────────────────────────────────────
+        current_high = float(highs[i])  # Python float
         if can_buy and (current_high >= period_high):
             open_orders.append((current_date, current_close))
             buy_signals += 1
             transaction_log.append({
                 "Ticker": None,  # fill later
-                "Date": current_date.strftime("%Y-%m-%d"),
+                "Date": current_date.astype("datetime64[D]").astype(str),
                 "Event": "Buy",
                 "Price": current_close,
                 "Quantity": 1,
@@ -638,29 +664,31 @@ def simulate_turtle_strategy(
                 "Remarks": "Buy signal triggered"
             })
 
-        # 5) Track daily investment = (# open orders) * investment_amount
+        # ───────────────────────────────────────────────
+        # 5) Track daily investment
+        # ───────────────────────────────────────────────
         investment_tracker.append({
             "date": current_date,
             "investment": len(open_orders) * investment_amount
         })
 
-        # 6) Check SELL condition: if we have open orders, see if current_close ≥ profit_target * avg_buy_price
+        # ───────────────────────────────────────────────
+        # 6) Check SELL: if holding and current_close ≥ profit_target × avg_buy_price
+        # ───────────────────────────────────────────────
         if open_orders:
-            # recompute avg_buy_price in case it was None
             avg_buy_price = float(
                 sum([order[1] for order in open_orders]) / len(open_orders)
             )
             if current_close >= (float(profit_target) * avg_buy_price):
-                # Calculate profit per order
                 profit_per_order = (current_close / avg_buy_price - 1.0) * investment_amount
                 trade_profit = profit_per_order * len(open_orders)
                 total_profit += trade_profit
                 sell_signals += len(open_orders)
 
                 trade_record = {
-                    "buy_dates": ", ".join([order[0].strftime("%Y-%m-%d") for order in open_orders]),
+                    "buy_dates": ", ".join([order[0].astype("datetime64[D]").astype(str) for order in open_orders]),
                     "buy_prices": ", ".join([f"{order[1]:.2f}" for order in open_orders]),
-                    "sell_date": current_date.strftime("%Y-%m-%d"),
+                    "sell_date": current_date.astype("datetime64[D]").astype(str),
                     "sell_price": current_close,
                     "avg_buy_price": avg_buy_price,
                     "orders_closed": len(open_orders),
@@ -670,7 +698,7 @@ def simulate_turtle_strategy(
 
                 transaction_log.append({
                     "Ticker": None,  # fill later
-                    "Date": current_date.strftime("%Y-%m-%d"),
+                    "Date": current_date.astype("datetime64[D]").astype(str),
                     "Event": "Sell",
                     "Price": current_close,
                     "Quantity": len(open_orders),
@@ -681,7 +709,7 @@ def simulate_turtle_strategy(
                 # Clear all positions
                 open_orders = []
 
-    # Determine max investment over the entire period
+    # After looping through all dates, compute max_investment
     if investment_tracker:
         max_investment = max(entry["investment"] for entry in investment_tracker)
     else:
@@ -694,8 +722,7 @@ def simulate_turtle_strategy(
         "trades": trade_details,
         "investment_over_time": (
             pd.DataFrame(investment_tracker).set_index("date")
-            if investment_tracker
-            else pd.DataFrame()
+            if investment_tracker else pd.DataFrame()
         ),
         "transaction_log": (
             pd.DataFrame(transaction_log) if transaction_log else pd.DataFrame()
@@ -705,7 +732,7 @@ def simulate_turtle_strategy(
 
 
 # ================================================
-# Create a Plotly chart for “Investment Over Time”
+# Create a Plotly Chart: Investment Over Time
 # ================================================
 def create_investment_chart(ticker: str, investment_df: pd.DataFrame, trades: list) -> go.Figure:
     if investment_df.empty:
@@ -720,7 +747,7 @@ def create_investment_chart(ticker: str, investment_df: pd.DataFrame, trades: li
         line=dict(color="blue", width=2)
     ))
 
-    # Add vertical dashed lines at each sell date
+    # Add a red dashed vertical line at each sell date
     for trade in trades:
         sell_dt = pd.to_datetime(trade["sell_date"])
         fig.add_vline(
@@ -741,16 +768,21 @@ def create_investment_chart(ticker: str, investment_df: pd.DataFrame, trades: li
 
 
 # ================================================
-# Generate Excel Download Link
+# Generate Excel Download Link for Results
 # ================================================
 def generate_excel_download_link(results: dict) -> str:
     """
-    results: { ticker: { buy_signals, sell_signals, total_profit, trades, investment_over_time, transaction_log, max_investment } }
-    Returns a Base64-encoded <a href="..."> link for an in-memory Excel workbook.
+    Given results = {
+      ticker1: { buy_signals, sell_signals, total_profit, max_investment, trades, transaction_log, investment_over_time },
+      ticker2: { ... },
+      ...
+    }
+    returns a Base64‐encoded <a href="..."> link pointing to an in-memory Excel workbook
+    with sheets: Summary, TradeDetails, AllTransactions, DailyInvestment.
     """
     buffer = BytesIO()
 
-    # 1) Summary DataFrame
+    # 1) Build Summary DataFrame
     summary_df = pd.DataFrame.from_dict(
         {
             t: {
@@ -764,7 +796,7 @@ def generate_excel_download_link(results: dict) -> str:
         orient="index"
     ).reset_index().rename(columns={"index": "Ticker"})
 
-    # 2) TradeDetails DataFrame
+    # 2) Build TradeDetails DataFrame
     all_trades = []
     for t, data in results.items():
         for trade in data["trades"]:
@@ -772,7 +804,7 @@ def generate_excel_download_link(results: dict) -> str:
             all_trades.append(trade)
     trade_df = pd.DataFrame(all_trades) if all_trades else pd.DataFrame()
 
-    # 3) AllTransactions DataFrame
+    # 3) Build AllTransactions DataFrame
     all_transactions = []
     for t, data in results.items():
         if not data["transaction_log"].empty:
@@ -780,12 +812,10 @@ def generate_excel_download_link(results: dict) -> str:
             df_log["Ticker"] = t
             all_transactions.append(df_log)
     transaction_df = (
-        pd.concat(all_transactions, ignore_index=True)
-        if all_transactions
-        else pd.DataFrame()
+        pd.concat(all_transactions, ignore_index=True) if all_transactions else pd.DataFrame()
     )
 
-    # 4) DailyInvestment DataFrame
+    # 4) Build DailyInvestment DataFrame
     all_investments = []
     for t, data in results.items():
         if not data["investment_over_time"].empty:
@@ -793,12 +823,10 @@ def generate_excel_download_link(results: dict) -> str:
             inv_df["Ticker"] = t
             all_investments.append(inv_df)
     investment_df = (
-        pd.concat(all_investments, ignore_index=True)
-        if all_investments
-        else pd.DataFrame()
+        pd.concat(all_investments, ignore_index=True) if all_investments else pd.DataFrame()
     )
 
-    # Write all sheets to Excel in memory
+    # Write all sheets to an in-memory Excel file
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
         summary_df.to_excel(writer, sheet_name="Summary", index=False)
         if not trade_df.empty:
@@ -818,11 +846,14 @@ def generate_excel_download_link(results: dict) -> str:
 
 
 # ================================================
-# Main: Run Analysis When Button Pressed
+# Main Logic: Run When “Run Analysis” Button Is Clicked
 # ================================================
 if run_analysis:
     results = {}
 
+    # ────────────────────────────────────────────────────
+    # Optimization Mode
+    # ────────────────────────────────────────────────────
     if mode == "Optimization Mode":
         st.info("Running optimization. Please wait...")
 
@@ -849,7 +880,7 @@ if run_analysis:
                         run_count += 1
                         progress_bar.progress(run_count / total_runs)
 
-                        if res["max_investment"] > 0 and res["sell_signals"] > 0:
+                        if (res["max_investment"] > 0) and (res["sell_signals"] > 0):
                             obj_val = res["total_profit"] / (res["max_investment"] + 1)
                         else:
                             obj_val = -np.inf
@@ -884,13 +915,12 @@ if run_analysis:
             if fig:
                 st.plotly_chart(fig, use_container_width=True)
 
-            st.markdown(
-                generate_excel_download_link({ticker: best_result}),
-                unsafe_allow_html=True
-            )
+            st.markdown(generate_excel_download_link({ticker: best_result}), unsafe_allow_html=True)
 
+    # ────────────────────────────────────────────────────
+    # Normal Mode
+    # ────────────────────────────────────────────────────
     else:
-        # Normal Mode
         data = yf.download(ticker, start=start_date, end=end_date, auto_adjust=False)
         if data.empty:
             st.error(f"No data available for {ticker}")
@@ -902,7 +932,6 @@ if run_analysis:
                 profit_target,
                 min_buy_gap
             )
-            # Fill in “Ticker” column in transaction_log
             if not result["transaction_log"].empty:
                 result["transaction_log"]["Ticker"] = ticker
 
@@ -955,16 +984,13 @@ if run_analysis:
                 if not result["investment_over_time"].empty:
                     st.dataframe(result["investment_over_time"], use_container_width=True)
 
-            st.markdown(
-                generate_excel_download_link(results),
-                unsafe_allow_html=True
-            )
+            st.markdown(generate_excel_download_link(results), unsafe_allow_html=True)
 
 else:
     st.info("Adjust the parameters in the sidebar and click 'Run Analysis' to begin.")
 
 # ================================================
-# Expander: About the Strategy
+# Expander: About the Turtle Trading Strategy
 # ================================================
 with st.expander("About the Turtle Trading Strategy"):
     st.markdown("""
@@ -982,6 +1008,4 @@ with st.expander("About the Turtle Trading Strategy"):
     In **Optimization Mode**, the app searches for the combination of lookback period, profit target,
     and minimum buy gap that maximizes the ratio of total profit to max investment.
     """)
-
-
 
